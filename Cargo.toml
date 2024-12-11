@@ -1,5 +1,7 @@
 [package]
 name = "fracking"
+authors = ["Austin Poor"]
+description = "A fractional indexing library."
 version = "0.1.0"
 edition = "2021"
 
