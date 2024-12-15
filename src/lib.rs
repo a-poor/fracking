@@ -1,3 +1,5 @@
+use std::intrinsics::unreachable;
+
 const BASE_62_DIGITS: &str = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 
 const SMALLEST_INT: &str = "A00000000000000000000000000";
@@ -38,7 +40,67 @@ impl std::error::Error for FrackErr {}
 
 
 pub fn key_between(a: &str, b: &str) -> Result<String, FrackErr> {
-    todo!();
+    if a != "" {
+        validate_order_key(a)?;
+    }
+    if b != "" {
+        validate_order_key(b)?;
+    }
+    if a != "" && b != "" && a >= b {
+        return Err(FrackErr::KeysOutOfOrder(a.to_string(), b.to_string()));
+    }
+
+    match (a, b) {
+        ("", "") => Ok(ZERO.to_string()),
+        ("", _) => {
+            let ib = get_int_part(b)?;
+            let fb = b.chars().skip(ib.len()).collect::<String>();
+            
+            if ib == SMALLEST_INT {
+                let m = midpoint("", &fb)?;
+                return Ok(format!("{}{}", ib, m)); 
+            }
+            if ib < b.to_string() {
+                return Ok(ib);
+            }
+            
+            let res = decrement_int(&ib)?;
+            if res == "" {
+                return Err(FrackErr::RangeUnderflow);
+            }
+
+            Ok(res)
+        },
+        (_, "") => {
+            let ia = get_int_part(a)?;
+            let fa = a.chars().skip(ia.len()).collect::<String>();
+            let i = increment_int(&ia)?;
+            if i == "" {
+                let m = midpoint(&fa, "")?;
+                return Ok(format!("{}{}", ia, m));
+            }
+            Ok(i)
+        },
+        (_, _) => {
+            let ia = get_int_part(a)?;
+            let fa = a.chars().skip(ia.len()).collect::<String>();
+            let ib = get_int_part(b)?;
+            let fb = b.chars().skip(ib.len()).collect::<String>();
+            if ia == ib {
+                let m = midpoint(&fa, &fb)?;
+                return Ok(format!("{}{}", ia, m));
+            }
+            let i = increment_int(&ia)?;
+            if i == "" {
+                return Err(FrackErr::RangeOverflow);
+            }
+            if i < b.to_string() {
+                return Ok(i);
+            }
+            let m = midpoint(&fa, "")?;
+            Ok(format!("{}{}", ia, m))
+        },
+    }
 }
 
 pub fn f64_approx(key: &str) -> Result<f64, FrackErr> {
@@ -123,23 +185,54 @@ fn midpoint(a: &str, b: &str) -> Result<String, FrackErr> {
             }
         },
         None => {
-            return Err(FrackErr::InvalidDigit(c.to_string()));
+            return Err(FrackErr::InvalidDigit("".to_string()));
         }
     };
     let mp = midpoint(&sa, "")?;
     Ok(format!("{}{}", da, mp))
 }
 
-fn validate_int(i: usize) -> Result<(), FrackErr> {
-    todo!();
+fn validate_int(i: &str) -> Result<(), FrackErr> {
+    let c0 = match i.chars().nth(0) {
+        Some(c) => c,
+        None => {
+            return Err(FrackErr::InvalidKeyInteger(i.to_string()));
+        }
+    };
+    let exp = get_int_len(c0)?;
+    if i.len() != exp {
+        return Err(FrackErr::InvalidKeyInteger(i.to_string()));
+    }
+    Ok(())
 }
 
-fn get_int_len() -> Result<usize, FrackErr> {
-    todo!();
+fn get_int_len(head: char) -> Result<usize, FrackErr> {
+    match head {
+        'a'..='z' => {
+            let n = head as usize - 'a' as usize + 2;
+            Ok(n)
+        },
+        'A'..='Z' => {
+            let n = 'Z' as usize - head as usize + 2;
+            Ok(n)
+        },
+        _ => Err(FrackErr::InvalidOrderKey(head.to_string())),
+    }
 }
 
 fn get_int_part(key: &str) -> Result<String, FrackErr> {
-    todo!();
+    let c0 = match key.chars().nth(0) {
+        Some(c) => c,
+        None => {
+            return Err(FrackErr::InvalidKey(key.to_string()));
+        }
+    };
+    let int_part_len = get_int_len(c0)?;
+    if int_part_len > key.len() {
+        return Err(FrackErr::InvalidOrderKey(key.to_string()));
+    }
+    let int_part = key.chars().take(int_part_len).collect::<String>();
+    Ok(int_part)
 }
 
 fn validate_order_key(key: &str) -> Result<(), FrackErr> {
@@ -156,10 +249,74 @@ fn validate_order_key(key: &str) -> Result<(), FrackErr> {
 }
 
 fn increment_int(x: &str) -> Result<String, FrackErr> {
-    todo!();
+    validate_int(x)?;
+
+    let head = x.chars().nth(0).ok_or(FrackErr::InvalidKey(x.to_string()))?;
+    let mut digs = x.chars().skip(1).collect::<Vec<char>>();
+    let mut carry = true;
+    for i in (0..digs.len()).rev() {
+        let d = digs[i];
+        let d = match BASE_62_DIGITS.find(d) {
+            Some(d) => d,
+            None => {
+                return Err(FrackErr::InvalidKey(x.to_string()));
+            }
+        };
+        if carry {
+            if d == 61 {
+                digs[i] = '0';
+            } else {
+                digs[i] = BASE_62_DIGITS.chars().nth(d + 1).unwrap();
+                carry = false;
+            }
+        }
+    }
+
+    if carry && head == 'Z' {
+        return Ok("a0".to_string());
+    }
+    if carry && head == 'z' {
+        return Ok("".to_string());
+    }
+    if carry {
+        let h = char::from_u32(head as u32 + 1).ok_or(FrackErr::InvalidKey(x.to_string()))?;
+        if h > 'a' {
+            digs.push('0');
+        } else {
+            digs.remove(0);
+        }
+        return Ok(format!("{}{}", h, digs.iter().collect::<String>()));
+    }
+    Ok(format!("{}{}", head, digs.iter().collect::<String>()))
 }
 
 fn decrement_int(x: &str) -> Result<String, FrackErr> {
+    validate_int(x)?;
+
+    let head = x.chars().nth(0).ok_or(FrackErr::InvalidKey(x.to_string()))?;
+    let mut digs = x.chars().skip(1).collect::<Vec<char>>();
+    let mut borrow = true;
+    for i in (0..digs.len()).rev() {
+        if !borrow {
+            break;
+        }
+        let di = digs[i];
+        let d = BASE_62_DIGITS.find(di).map(|n| n as i32).unwrap_or(-1);
+        digs[i] = match d {
+            -1 => BASE_62_DIGITS
+                    .chars()
+                    .last()
+                    .expect("I know this const has at least one char"),
+            _ => {
+                let dth_char = BASE_62_DIGITS
+                    .chars()
+                    .nth(d as usize)
+                    .ok_or(FrackErr::InvalidKey(x.to_string()))?;
+                todo!();
+            },
+        };
+    }
+
     todo!();
 }
 
